@@ -2,8 +2,8 @@ import json
 import os
 from dotenv import load_dotenv
 
-from grokim import ChatGenerator, generate_all_scenarios
-from grokan import ChatAnalyzer
+from generate import ChatGenerator, generate_all_scenarios
+from analyze import ChatAnalyzer
 
 load_dotenv()
 

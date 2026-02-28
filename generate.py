@@ -1,124 +1,95 @@
 import json
 import itertools
-import os
-from openai import OpenAI
+
+from groq import Groq
+import instructor
+from pydantic import BaseModel, Field
+from typing import List, Dict
 from dotenv import load_dotenv
+import os
 
 load_dotenv()
 
-openai_client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
-OPENAI_MODEL = "gpt-4o-mini"
+class ChatMessage(BaseModel):
+    role: str = Field(description="Role of the speaker: 'client' or 'agent'")
+    text: str = Field(description="The content of the message")
 
-# Pricing per 1M tokens (USD)
-PRICES = {
-    "gpt-4o":          {"input": 2.50,  "output": 10.00},
-    "gpt-4o-mini":     {"input": 0.15,  "output": 0.60},
-    "gpt-4-turbo":     {"input": 10.00, "output": 30.00},
-    "gpt-3.5-turbo":   {"input": 0.50,  "output": 1.50},
-}
+class SingleChat(BaseModel):
+    chat_id: int = Field(description="The sequential number of the chat (e.g., 1, 2, 3)")
+    messages: List[ChatMessage] = Field(description="List of messages in this conversation")
 
-total_input_tokens = 0
-total_output_tokens = 0
-total_cost_usd = 0.0
+class ChatDataset(BaseModel):
+    chats: List[SingleChat] = Field(description="A list of generated conversations")
 
 
-def calc_cost(input_tokens: int, output_tokens: int, model: str) -> float:
-    price = PRICES.get(model, {"input": 0, "output": 0})
-    return (input_tokens * price["input"] + output_tokens * price["output"]) / 1_000_000
+class ChatGenerator:
+    def __init__(self, api_key, model="openai/gpt-oss-20b"):
+        self.client = instructor.from_groq(Groq(api_key=api_key), mode=instructor.Mode.JSON)
+        self.model = model
+        self.system_prompt = ("You are a professional generator of realistic support chats in English")
 
-
-def print_cost_summary(batch_num: int, input_tok: int, output_tok: int, batch_cost: float):
-    print(
-        f"[Batch {batch_num}] "
-        f"input: {input_tok} tok | output: {output_tok} tok | "
-        f"cost: ${batch_cost:.4f} | "
-        f"total so far: ${total_cost_usd:.4f}"
-    )
-
-
-SYSTEM_PROMPT = """
-You are a professional dataset generator.
-Your goal is to create realistic support chat dialogues.
-RULES:
-1. Return ONLY clean JSON.
-2. Format: {"chat_1": [{"role": "client", "text": "..."}, {"role": "agent", "text": "..."}, ...], "chat_2": ...}.
-3. Language: English.
-"""
+    def generate(self, scenario, num_chats=2):
+        prompt = f"Generate {num_chats} diverse chat conversations based on the following scenario: {scenario}"
+        
+        response = self.client.chat.completions.create(
+            messages=[
+                {"role": "system", "content": self.system_prompt},
+                {"role": "user", "content": prompt}
+            ],
+            model=self.model,
+            response_model=ChatDataset,
+            temperature=0,
+            seed=27,
+            top_p=0.9,
+            presence_penalty=0.3,
+            frequency_penalty=0.4
+        )
+        
+        return response
 
 
 themes = ["payment issues", "technical errors", "account access", "tariff inquiries", "refunds"]
-casetypes = ["successful cases", "problematic cases", "conflict cases", "cases with agent mistakes"]
-tone_errors = ["rude tone", "passive-aggressive behavior", "lack of empathy", "robotic response"]
-logical_errors = ["ignored question", "incorrect info", "unnecessary escalation"]
-all_mistakes = tone_errors + logical_errors
-lengths = ["short", "average", "long"]
+casetypes = ["successful", "problematic", "conflict", "inappropriate support agent communication style", "support agent reasoning error"]
+duration = ["short", "average", "long"]
 emotions = ["satisfaction", "dissatisfaction", "hidden dissatisfaction"]
 completion_types = ["logically finished", "abruptly ended"]
 
 def generate_all_scenarios():
     all_combinations = []
 
-    for t, c, l, e, comp in itertools.product(themes, casetypes, lengths, emotions, completion_types):
-        mistake_info = ""
+    for t, c, l, e, comp in itertools.product(themes, casetypes, duration, emotions, completion_types):
+        if (c=="successful" and e in ["dissatisfaction","hidden dissatisfaction"]):
+            continue
         
-        if c == "cases with agent mistakes":           
-            for i in range(len(all_mistakes)):
-                mistake_info = f"Specific mistake: {all_mistakes[i]}."
-                scenario = (f"Theme: {t}, Case: {c}, Length: {l}, Client emotion: {e}. {mistake_info}. Conversation flow: {comp}")
-                all_combinations.append(scenario)
-        else:
-            mistake_info = "Agent is professional."
-            scenario = (f"Theme: {t}, Case: {c}, Length: {l}, Client emotion: {e}. {mistake_info}. Conversation flow: {comp}")
-            all_combinations.append(scenario)
+        scenario = (f"Theme: {t}, Case: {c}, Duration: {l}, Client emotion: {e}, Conversation flow: {comp}")
+        all_combinations.append(scenario)
     
     return all_combinations
 
 all_scenarios = generate_all_scenarios()
 
-COST_LIMIT_USD = 20.0
 
-dataset = []
-for i in range(3):
-    if total_cost_usd >= COST_LIMIT_USD:
-        print(f"Ліміт ${COST_LIMIT_USD:.2f} досягнуто. Зупинка після батчу {i}.")
-        break
+if __name__ == "__main__":
+    generator = ChatGenerator(api_key=os.environ.get("OPENAI_API_KEY"))
 
-    batch = all_scenarios[i*10:i*10+10]
-    formatted_scenarios = "\n".join([f"{j+1}. {s}" for j, s in enumerate(batch)])
+    dataset = []
+    for i, scenario in enumerate(all_scenarios):
+        print(f"Generating...  {i}/{len(all_scenarios)}: {scenario}")
 
-    try:
-        response = openai_client.chat.completions.create(
-            model="gpt-4o-mini",
-            temperature=0,
-            response_format={"type": "json_object"},
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPT},
-                {"role": "user", "content": f"Generate dialogues based on these exact scenarios:\n{formatted_scenarios}"},
-            ],
-        )
+        try:
+            result = generator.generate(scenario, num_chats=1)
+            chat_entry = {
+                "scenario_index": i,
+                "scenario_description": scenario,
+                "generated_data": result.model_dump()
+            }
+            dataset.append(chat_entry)
 
-        usage = response.usage
-        batch_input = usage.prompt_tokens
-        batch_output = usage.completion_tokens
-        batch_cost = calc_cost(batch_input, batch_output, OPENAI_MODEL)
+        except Exception as e:
+            print(f"Error with {i}: {e}")
 
-        total_input_tokens += batch_input
-        total_output_tokens += batch_output
-        total_cost_usd += batch_cost
+    output_file = "generated_chats_dataset.json"
+    with open(output_file, "w", encoding="utf-8") as f:
+        json.dump(dataset, f, indent=4, ensure_ascii=False)
 
-        print_cost_summary(i + 1, batch_input, batch_output, batch_cost)
-
-        chat_data = json.loads(response.choices[0].message.content)
-        dataset.append(chat_data)
-
-    except Exception as e:
-        print(f"Помилка: {e}")
-
-print(
-    f"Input tokens : {total_input_tokens}\n"
-    f"Output tokens : {total_output_tokens}\n"
-    f"Totally cost : ${total_cost_usd:.4f}"
-)
-
-with open("generate.json", "w", encoding="utf-8") as f:
-    json.dump(dataset, f, ensure_ascii=False, indent=4)
+    print(f"Completed! Chats are in {output_file}")
