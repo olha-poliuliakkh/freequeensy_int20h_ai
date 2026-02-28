@@ -58,27 +58,30 @@ class ChatAnalyzer:
         return analysis_result
 
 
-if __name__ == "__main__":
-    analyzer = ChatAnalyzer(api_key=os.environ.get("OPENAI_API_KEY"))
+analyzer = ChatAnalyzer(api_key=os.environ.get("OPENAI_API_KEY"))
 
-    with open("generated_chats_dataset.json", "r", encoding="utf-8") as f:
-        chats_to_analyze = json.load(f)
 
-    analyzed_dataset = []
-    for entry in chats_to_analyze:
-        print(f"Chat scenario for analysis: {entry['scenario_description']}")
-        for i, chat in enumerate(entry['generated_data']['chats']):
-            analysis_result = analyzer.analyze_chat(chat['messages'])
-            chat_analysis = {
-                "scenario_index": entry['scenario_index'],
-                "scenario": entry['scenario_description'],
-                "chat_id": i + 1,
-                "analysis": analysis_result.model_dump()
-            }
-            analyzed_dataset.append(chat_analysis)
+with open("generated_chats_dataset.json", "r", encoding="utf-8") as f:
+    chats_to_analyze = json.load(f)
 
-    output_file = "analyzed_support_data.json"
-    with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(analyzed_dataset, f, indent=4, ensure_ascii=False)
 
-    print(f"Analysis is completed! Results in {output_file}.")
+analyzed_dataset = []
+for entry in chats_to_analyze:
+    print(f"Chat scenario for analisis: {entry['scenario_description']}")
+    for i, chat in enumerate(entry['generated_data']['chats']):
+    
+        analysis_result = analyzer.analyze_chat(chat['messages'])
+        chat_analysis = {
+            "scenario_index": entry['scenario_index'],
+            "scenario": entry['scenario_description'],
+            "chat_id": i+1,
+            "analysis": analysis_result.model_dump()
+        }
+        analyzed_dataset.append(chat_analysis)
+
+
+output_file = "analyzed_support_data.json"
+with open(output_file, "w", encoding="utf-8") as f:
+    json.dump(analyzed_dataset, f, indent=4, ensure_ascii=False)
+
+print(f"Analysis is completed! Results in {output_file}.")
